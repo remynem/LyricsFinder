@@ -1,223 +1,287 @@
 # LyricFinder 🎵
 
-Search any song from a lyric fragment — any language, any spelling. Mobile-first app with a FastAPI backend, hybrid semantic + lexical search, and multilingual reranking.
+> Type any lyric fragment — any language, typos allowed — and find the song instantly.
+
+Mobile app (iOS & Android) built with React Native + Expo, powered by a FastAPI backend using hybrid semantic search (Qdrant embeddings + Elasticsearch BM25) and a multilingual cross-encoder reranker.
+
+**Repo:** https://github.com/remynem/LyricsFinder
 
 ---
 
 ## Table of contents
 
-1. [Architecture overview](#architecture)
-2. [Quick start (Docker)](#quick-start)
-3. [Environment variables](#environment-variables)
-4. [Backend API reference](#backend-api)
-5. [Ingesting a corpus](#ingesting-a-corpus)
-6. [Mobile app setup](#mobile-app)
-7. [CI/CD & Fastlane](#cicd)
-8. [Store publishing checklist](#store-publishing)
-9. [Lyrics licence compliance](#lyrics-licence)
-10. [Performance & scaling](#performance)
+1. [Run locally in 5 minutes](#run-locally)
+2. [Project structure](#project-structure)
+3. [Architecture](#architecture)
+4. [Environment variables](#environment-variables)
+5. [API reference](#api-reference)
+6. [Ingesting a corpus](#ingesting-a-corpus)
+7. [Mobile app](#mobile-app)
+8. [Running tests](#running-tests)
+9. [CI/CD](#cicd)
+10. [Store publishing](#store-publishing)
+11. [Lyrics licence compliance](#lyrics-licence)
+12. [Performance & scaling](#performance)
+
+---
+
+## Run locally
+
+### Prerequisites
+
+| Tool | Version | Install |
+|---|---|---|
+| Docker Desktop | ≥ 4.x | https://www.docker.com/products/docker-desktop |
+| Node.js | ≥ 20 | https://nodejs.org |
+| Git | any | https://git-scm.com |
+
+### Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/remynem/LyricsFinder.git
+cd LyricsFinder
+```
+
+### Step 2 — Create your environment file
+
+```bash
+cp .env.example .env
+```
+
+The defaults in `.env.example` work out-of-the-box for local development
+(sentence-transformers embeddings, no external API keys needed).
+
+### Step 3 — Start all backend services
+
+```bash
+docker compose up --build
+```
+
+This starts 5 containers. Wait until you see `Application startup complete` in the logs (~60s first run).
+
+| Service | URL | What it does |
+|---|---|---|
+| FastAPI backend | http://localhost:8000 | REST API |
+| Swagger UI | http://localhost:8000/docs | Interactive API docs |
+| Qdrant | http://localhost:6333/dashboard | Vector DB dashboard |
+| Elasticsearch | http://localhost:9200 | BM25 lexical search |
+| PostgreSQL | localhost:5432 | Song metadata |
+| Redis | localhost:6379 | Query cache |
+
+### Step 4 — Initialise the database
+
+```bash
+docker compose exec backend python -m app.db.init
+```
+
+### Step 5 — Load 1 000 sample songs
+
+```bash
+docker compose exec backend python scripts/ingest_sample.py
+```
+
+Output: `Done: 1000 songs, ~8000 segments ingested.`
+
+### Step 6 — Test a search
+
+```bash
+curl -X POST http://localhost:8000/search \
+  -H "X-API-Key: dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query_text": "comme un petit coeur qui bat", "top_k": 3}'
+```
+
+Expected response: JSON with `results[0].title = "Le Temps de l'Amour"`, `confidence_score > 0.9`.
+
+### Step 7 — Run the mobile app
+
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+Press `i` for iOS simulator, `a` for Android emulator, or scan the QR code with the **Expo Go** app on your phone.
+
+### Stop everything
+
+```bash
+docker compose down
+```
+
+---
+
+## Project structure
+
+```
+LyricsFinder/
+├── backend/                    # FastAPI Python backend
+│   ├── app/
+│   │   ├── main.py             # App entry point
+│   │   ├── api/routes/         # Endpoint handlers
+│   │   │   ├── search.py       # POST /search  ← core pipeline
+│   │   │   ├── ingest.py       # POST /ingest
+│   │   │   ├── track.py        # GET /track/{id}
+│   │   │   └── feedback.py     # POST /feedback
+│   │   ├── core/
+│   │   │   ├── config.py       # All env vars
+│   │   │   └── auth.py         # API key / JWT
+│   │   ├── services/
+│   │   │   ├── embeddings.py   # OpenAI / sentence-transformers adapter
+│   │   │   ├── vector_db.py    # Qdrant / Pinecone adapter
+│   │   │   ├── lexical.py      # Elasticsearch BM25
+│   │   │   ├── reranker.py     # Cross-encoder reranker
+│   │   │   ├── text.py         # Normalise, segment, deduplicate
+│   │   │   ├── language.py     # Language detection
+│   │   │   ├── spotify.py      # Preview URL lookup
+│   │   │   └── cache.py        # Redis cache
+│   │   ├── db/
+│   │   │   ├── models.py       # SQLAlchemy models
+│   │   │   ├── session.py      # Async DB session
+│   │   │   └── repos/          # DB access layer
+│   │   └── models/             # Pydantic schemas
+│   ├── scripts/
+│   │   └── ingest_sample.py    # Load 1 000 test songs
+│   ├── tests/
+│   │   ├── conftest.py
+│   │   └── test_search.py
+│   ├── pytest.ini
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── mobile/                     # React Native (Expo) app
+│   ├── src/
+│   │   ├── screens/
+│   │   │   ├── SearchScreen.tsx
+│   │   │   ├── ResultsScreen.tsx
+│   │   │   └── TrackScreen.tsx
+│   │   ├── components/         # Reusable UI components
+│   │   ├── services/
+│   │   │   └── api.ts          # Typed API client
+│   │   ├── hooks/
+│   │   │   └── useSearch.ts
+│   │   ├── i18n/               # Translations (react-i18next)
+│   │   └── constants/
+│   ├── eas.json                # Expo build profiles
+│   └── package.json
+│
+├── docs/
+│   └── LICENCE_COMPLIANCE.md   # Lyrics licensing & store checklist
+│
+├── .github/workflows/
+│   ├── backend-test.yml        # Pytest CI on every push
+│   └── mobile-submit.yml       # EAS build + store submit on tag
+│
+├── docker-compose.yml          # All services
+├── .env.example                # All env vars documented
+└── README.md
+```
 
 ---
 
 ## Architecture
 
 ```
-Mobile (React Native / Expo)
-        │
-        ▼
-API Gateway (FastAPI + JWT)
-        │
-  ┌─────┴──────────────────┐
-  │                        │
-POST /search            POST /ingest
-  │                        │
-  ├─ Language detect       ├─ Normalise text
-  ├─ Embedding (OpenAI)    ├─ Segment lyrics
-  ├─ ANN (Qdrant HNSW)     ├─ Batch embeddings
-  ├─ BM25 (Elasticsearch)  └─ Index ES + Qdrant
-  ├─ Hybrid merge
-  └─ Cross-encoder rerank
-        │
-   ┌────┴────┐
-PostgreSQL  Qdrant  Elasticsearch  S3
-```
-
----
-
-## Quick start
-
-### Prerequisites
-
-- Docker & Docker Compose v2
-- Node.js ≥ 20 (for mobile)
-- Python ≥ 3.11 (optional, for local dev without Docker)
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/your-org/lyricfinder.git
-cd lyricfinder
-cp .env.example .env
-# Edit .env with your keys (see Environment variables below)
-```
-
-### 2. Start all services
-
-```bash
-docker compose up --build
-```
-
-Services started:
-| Service | URL |
-|---|---|
-| FastAPI backend | http://localhost:8000 |
-| API docs (Swagger) | http://localhost:8000/docs |
-| Qdrant dashboard | http://localhost:6333/dashboard |
-| Elasticsearch | http://localhost:9200 |
-| PostgreSQL | localhost:5432 |
-
-### 3. Initialise the database
-
-```bash
-docker compose exec backend python -m app.db.init
-```
-
-### 4. Ingest the sample corpus (1 000 songs)
-
-```bash
-docker compose exec backend python scripts/ingest_sample.py
-```
-
-### 5. Run a test search
-
-```bash
-curl -X POST http://localhost:8000/search \
-  -H "X-API-Key: dev-key" \
-  -H "Content-Type: application/json" \
-  -d '{"query_text": "comme un petit coeur qui bat", "top_k": 5}'
+Mobile app (React Native / Expo)
+          │  HTTPS + X-API-Key
+          ▼
+  FastAPI backend (:8000)
+          │
+  ┌───────┴────────────────────────┐
+  │                                │
+POST /search                  POST /ingest
+  │                                │
+  ├─ 1. Detect language            ├─ 1. Normalise text
+  ├─ 2. Generate embedding         ├─ 2. Segment into 1-3 line chunks
+  ├─ 3. ANN search → Qdrant        ├─ 3. Batch embed (OpenAI / ST)
+  ├─ 4. BM25 search → Elasticsearch├─ 4. Upsert Qdrant + index ES
+  ├─ 5. RRF hybrid merge           └─ 5. Store metadata in PostgreSQL
+  ├─ 6. Cross-encoder rerank
+  ├─ 7. Aggregate by track
+  └─ 8. Enrich with Spotify preview URL
+          │
+  ┌───────┼──────────────────┐
+  │       │                  │
+PostgreSQL Qdrant        Elasticsearch
+(metadata) (vectors/HNSW) (BM25 index)
 ```
 
 ---
 
 ## Environment variables
 
-Copy `.env.example` to `.env` and fill in the values below.
+Copy `.env.example` → `.env`. The defaults work locally without any API keys.
 
-### Required
+### Required for local dev (already set in .env.example)
 
-| Variable | Description |
-|---|---|
-| `SECRET_KEY` | Random secret for JWT signing (run `openssl rand -hex 32`) |
-| `API_KEY` | Simple API key for prototype auth |
-| `DATABASE_URL` | PostgreSQL DSN e.g. `postgresql+asyncpg://user:pass@db:5432/lyricfinder` |
-| `QDRANT_URL` | Qdrant host e.g. `http://qdrant:6333` |
-| `ELASTICSEARCH_URL` | Elasticsearch host e.g. `http://elasticsearch:9200` |
+| Variable | Default | Description |
+|---|---|---|
+| `API_KEY` | `dev-key` | Auth header value (`X-API-Key`) |
+| `SECRET_KEY` | `change-me-...` | JWT signing secret |
+| `DATABASE_URL` | points to Docker PostgreSQL | PostgreSQL connection string |
+| `QDRANT_URL` | `http://qdrant:6333` | Qdrant vector DB |
+| `ELASTICSEARCH_URL` | `http://elasticsearch:9200` | Elasticsearch |
+| `EMBEDDING_PROVIDER` | `sentence_transformers` | No API key needed |
 
-### Embeddings (choose one)
+### To enable OpenAI embeddings (better quality)
 
-| Variable | Description |
-|---|---|
-| `OPENAI_API_KEY` | OpenAI key (uses `text-embedding-3-large`) |
-| `EMBEDDING_PROVIDER` | `openai` (default) or `sentence_transformers` |
-| `SENTENCE_TRANSFORMERS_MODEL` | Default: `paraphrase-multilingual-MiniLM-L12-v2` |
+```env
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+EMBEDDING_DIM=3072
+```
 
 ### Optional integrations
 
 | Variable | Description |
 |---|---|
-| `SPOTIFY_CLIENT_ID` | Spotify Web API client ID |
-| `SPOTIFY_CLIENT_SECRET` | Spotify Web API secret |
-| `MUSIXMATCH_API_KEY` | Musixmatch lyrics API key |
-| `LYRICFIND_API_KEY` | LyricFind API key (alternative) |
-| `DEEPL_API_KEY` | DeepL for query translation (optional) |
-| `GOOGLE_TRANSLATE_KEY` | Google Translate fallback |
-| `SENTRY_DSN` | Sentry error reporting |
-| `S3_BUCKET` | AWS S3 bucket for album art |
-| `AWS_ACCESS_KEY_ID` | AWS credentials |
-| `AWS_SECRET_ACCESS_KEY` | AWS credentials |
-| `RERANKER_MODEL` | HuggingFace model ID or `openai` |
-| `PINECONE_API_KEY` | Alternative to Qdrant (set `VECTOR_DB=pinecone`) |
+| `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` | Audio preview URLs in results |
+| `MUSIXMATCH_API_KEY` | Licensed lyrics provider |
+| `DEEPL_API_KEY` | Query translation for multilingual search |
+| `SENTRY_DSN` | Error reporting |
+| `PINECONE_API_KEY` | Alternative vector DB (set `VECTOR_DB=pinecone`) |
 
 ---
 
-## Backend API
+## API reference
 
-Full OpenAPI spec: `http://localhost:8000/docs`
-
-### POST /ingest
-
-Ingest a JSON or CSV corpus of songs.
-
-**Request body:**
-```json
-{
-  "songs": [
-    {
-      "track_id": "abc123",
-      "title": "Le Temps de l'Amour",
-      "artist": "Françoise Hardy",
-      "album": "Tous les garçons et les filles",
-      "release_year": 1963,
-      "language": "fr",
-      "lyrics": "Le temps de l'amour\nC'est long et c'est court…",
-      "external_ids": {
-        "spotify_id": "3n3Ppam7vgaVa1iaRUIOKE",
-        "musixmatch_id": "12345"
-      }
-    }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "songs_ingested": 1,
-  "segments_created": 24,
-  "embeddings_generated": 24,
-  "duration_seconds": 3.2
-}
-```
+Full interactive docs at **http://localhost:8000/docs** when running locally.
 
 ### POST /search
 
-Search by lyric fragment.
-
-**Request body:**
-```json
-{
-  "query_text": "comme un petit coeur qui bat",
-  "top_k": 10,
-  "language_hint": "fr",
-  "use_translation": false,
-  "filter_year_min": 1960,
-  "filter_year_max": 1970,
-  "filter_language": "fr"
-}
+```bash
+curl -X POST http://localhost:8000/search \
+  -H "X-API-Key: dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query_text": "comme un petit coeur qui bat",
+    "top_k": 5,
+    "filter_language": "fr"
+  }'
 ```
 
-**Response:**
+<details>
+<summary>Response example</summary>
+
 ```json
 {
-  "query_id": "q_abc123",
+  "query_id": "3fa85f64-...",
   "detected_language": "fr",
   "results": [
     {
       "track_id": "abc123",
       "title": "Le Temps de l'Amour",
       "artist": "Françoise Hardy",
-      "album": "Tous les garçons et les filles",
       "release_year": 1963,
-      "language": "fr",
       "confidence_score": 0.97,
       "best_segment": {
         "text": "Comme un petit cœur qui bat",
-        "line_offset": 8,
-        "context": "C'est long et c'est court\nCa dure toujours\nComme un petit cœur qui bat"
+        "line_offset": 3,
+        "context": "Ça dure toujours\nComme un petit cœur qui bat\nTu t'en vas déjà"
       },
       "audio_preview": {
-        "spotify_preview_url": "https://p.scdn.co/mp3-preview/…",
-        "spotify_track_url": "https://open.spotify.com/track/…"
+        "spotify_preview_url": "https://p.scdn.co/mp3-preview/...",
+        "spotify_track_url": "https://open.spotify.com/track/..."
       }
     }
   ],
@@ -225,233 +289,182 @@ Search by lyric fragment.
   "latency_ms": 142
 }
 ```
+</details>
+
+### POST /ingest
+
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -H "X-API-Key: dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "songs": [{
+      "track_id": "unique-id",
+      "title": "Song Title",
+      "artist": "Artist Name",
+      "language": "fr",
+      "lyrics": "line one\nline two\nline three"
+    }]
+  }'
+```
 
 ### GET /track/{track_id}
 
-Returns full metadata and a licensed excerpt (or full lyrics if licence available).
+```bash
+curl http://localhost:8000/track/abc123 -H "X-API-Key: dev-key"
+```
 
 ### POST /feedback
 
-```json
-{
-  "query_id": "q_abc123",
-  "track_id": "abc123",
-  "is_correct": true,
-  "clicked_position": 1
-}
+```bash
+curl -X POST http://localhost:8000/feedback \
+  -H "X-API-Key: dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query_id": "...", "track_id": "abc123", "is_correct": true}'
 ```
 
 ---
 
 ## Ingesting a corpus
 
-### From a CSV file
+### Sample data (quickstart)
 
 ```bash
-# CSV must have columns: track_id, title, artist, album, release_year, language, lyrics
-docker compose exec backend python scripts/ingest_csv.py --file /data/my_corpus.csv
+docker compose exec backend python scripts/ingest_sample.py
 ```
 
-### From JSON
+### Your own CSV
+
+CSV must have columns: `track_id, title, artist, album, release_year, language, lyrics`
 
 ```bash
+# Copy your file into the container
+docker compose cp my_songs.csv backend:/data/my_songs.csv
+
+# Run ingestion
+docker compose exec backend python scripts/ingest_csv.py --file /data/my_songs.csv
+```
+
+### Your own JSON
+
+```bash
+docker compose cp songs.json backend:/data/songs.json
 docker compose exec backend python scripts/ingest_json.py --file /data/songs.json
-```
-
-### Batch size and performance
-
-For large corpora (>100k songs), tune:
-```env
-INGEST_BATCH_SIZE=64          # Embedding batch size
-INGEST_WORKERS=4              # Parallel workers
-QDRANT_HNSW_M=16              # HNSW construction param
-QDRANT_HNSW_EF_CONSTRUCT=100  # Higher = better recall, slower build
 ```
 
 ---
 
 ## Mobile app
 
-### Prerequisites
+### Run on your phone (no simulator needed)
+
+1. Install **Expo Go** from the App Store or Google Play
+2. Run:
+   ```bash
+   cd mobile
+   npm install
+   npx expo start --tunnel
+   ```
+3. Scan the QR code with your phone
+
+### Run on iOS simulator (Mac only)
 
 ```bash
-npm install -g expo-cli eas-cli
+cd mobile && npx expo start
+# Press i
 ```
 
-### Install dependencies
+### Run on Android emulator
 
 ```bash
-cd mobile
-npm install
+cd mobile && npx expo start
+# Press a
 ```
 
-### Configure
+### Build for stores (requires Expo account)
 
 ```bash
-cp mobile/.env.example mobile/.env
-# Set EXPO_PUBLIC_API_URL=http://localhost:8000
-# Set EXPO_PUBLIC_API_KEY=dev-key
-# Set EXPO_PUBLIC_SPOTIFY_CLIENT_ID=...
+npm install -g eas-cli
+eas login
+eas build --platform ios     # TestFlight
+eas build --platform android # Play Store AAB
 ```
-
-### Run on simulator
-
-```bash
-cd mobile
-npx expo start
-# Press i for iOS, a for Android
-```
-
-### Run on device (Expo Go)
-
-```bash
-npx expo start --tunnel
-# Scan the QR code with the Expo Go app
-```
-
----
-
-## CI/CD
-
-### GitHub Actions
-
-Workflows in `.github/workflows/`:
-
-| Workflow | Trigger | Action |
-|---|---|---|
-| `backend-test.yml` | Push to main/PR | Run pytest |
-| `backend-deploy.yml` | Push to main | Build & push Docker image |
-| `mobile-preview.yml` | PR | EAS build preview channel |
-| `mobile-submit.yml` | Tag `v*` | EAS submit to TestFlight + Play Internal |
-
-### Fastlane
-
-```bash
-cd mobile/ios
-fastlane beta        # Build and upload to TestFlight
-fastlane release     # Submit to App Store review
-
-cd mobile/android
-fastlane beta        # Upload to Play internal track
-fastlane release     # Promote to production
-```
-
-See `mobile/fastlane/README.md` for signing setup.
-
----
-
-## Store publishing
-
-### App Store (iOS)
-
-- [ ] Apple Developer account ($99/year)
-- [ ] Bundle ID registered in App Store Connect
-- [ ] Provisioning profile + distribution certificate
-- [ ] App Store Connect listing: name, subtitle, description, keywords
-- [ ] Screenshots: 6.7", 6.1", 5.5", iPad Pro 12.9"
-- [ ] App icon: 1024×1024 PNG, no alpha
-- [ ] App Privacy: declare data types collected (search queries, device ID)
-- [ ] Usage description strings in `Info.plist`:
-  - `NSMicrophoneUsageDescription` — for voice search
-  - `NSUserTrackingUsageDescription` — if using ATT
-- [ ] Age rating: 4+
-- [ ] Privacy policy URL (required)
-- [ ] Support URL
-- [ ] TestFlight beta test before submission
-
-### Google Play (Android)
-
-- [ ] Google Play Developer account ($25 one-time)
-- [ ] App signing enrolled (Play App Signing recommended)
-- [ ] AAB (Android App Bundle) — NOT APK
-- [ ] Play Console listing: title, short desc, full desc
-- [ ] Feature graphic: 1024×500
-- [ ] Screenshots: phone, 7" tablet, 10" tablet
-- [ ] Content rating questionnaire
-- [ ] Data safety section: disclose search history, no selling
-- [ ] Target SDK ≥ 34 (Android 14)
-- [ ] Internal test → Closed test → Open test → Production
-
----
-
-## Lyrics licence
-
-**Never display full lyrics without a licence.**
-
-| Provider | Type | URL |
-|---|---|---|
-| Musixmatch | Commercial API + revenue share | https://developer.musixmatch.com |
-| LyricFind | Commercial API | https://www.lyricfind.com |
-| Genius | Display only, no commercial | https://docs.genius.com |
-
-### Prototype mode (no licence)
-
-Display up to 4 lines as an excerpt. Show attribution:
-```
-© [Artist] / [Composer]. Excerpt via Musixmatch. All rights reserved.
-```
-
-### Compliance checklist
-
-- [ ] No full lyrics display without signed licence agreement
-- [ ] Attribution shown on every lyric display
-- [ ] Deep links to licensed platforms (Spotify, Apple Music, Genius)
-- [ ] Rate limits respected (Musixmatch: 2000 calls/day on free tier)
-- [ ] Lyrics not cached server-side beyond allowed duration
-- [ ] GDPR / CCPA consent flow in app
-- [ ] Privacy policy covers search query logging
-
----
-
-## Performance & scaling
-
-### Targets
-
-| Metric | Target |
-|---|---|
-| Search latency (p50) | < 150ms |
-| Search latency (p99) | < 500ms |
-| QPS (single instance) | > 50 |
-| Corpus size | Up to 10M segments |
-
-### Tuning knobs
-
-```env
-QDRANT_HNSW_M=16
-QDRANT_HNSW_EF=128          # Higher = better recall at search time
-SEARCH_CANDIDATE_LIMIT=200  # Pre-rerank candidates
-RERANKER_BATCH_SIZE=32
-CACHE_TTL_SECONDS=300       # Hot query cache (Redis)
-```
-
-### Scaling
-
-- Backend is stateless — scale horizontally behind a load balancer
-- Qdrant supports sharding for corpora > 5M segments
-- Use managed Qdrant Cloud or Pinecone for production
-- Elasticsearch: 3-node cluster for production
-- Separate embedding generation service for burst ingestion
 
 ---
 
 ## Running tests
 
 ```bash
-# Backend unit + integration tests
-docker compose exec backend pytest tests/ -v --cov=app
+# From the repo root
+docker compose exec backend pytest -v --cov=app
 
-# Load test (requires k6)
-k6 run tests/load/search_load_test.js
+# Or without Docker (from backend/ folder)
+cd backend
+pip install -r requirements.txt
+pytest -v
 ```
 
 ---
 
-## Metrics exposed
+## CI/CD
 
-`GET /metrics` returns Prometheus-compatible metrics:
+| Workflow | Trigger | What happens |
+|---|---|---|
+| `backend-test.yml` | Every push / PR | Runs pytest against real Qdrant + ES + PostgreSQL |
+| `mobile-submit.yml` | Git tag `v1.2.3` | EAS builds iOS + Android, submits to TestFlight + Play Internal |
 
-- `lyricfinder_search_latency_ms` — histogram
-- `lyricfinder_precision_at_1` — gauge (from feedback)
-- `lyricfinder_precision_at_5` — gauge
-- `lyricfinder_qps` — counter
-- `lyricfinder_ingested_songs_total` — counter
+To trigger a store release:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+---
+
+## Store publishing
+
+### App Store (iOS)
+- [ ] Apple Developer account — https://developer.apple.com ($99/year)
+- [ ] App Store Connect listing with screenshots, icon, privacy policy URL
+- [ ] `NSMicrophoneUsageDescription` in Info.plist (voice search)
+- [ ] TestFlight beta before submission
+
+### Google Play (Android)
+- [ ] Google Play Console account ($25 one-time)
+- [ ] Target SDK ≥ 34, AAB format, Play App Signing enrolled
+- [ ] Data safety section completed
+- [ ] Internal → Closed → Open → Production track
+
+Full checklist: [`docs/LICENCE_COMPLIANCE.md`](docs/LICENCE_COMPLIANCE.md)
+
+---
+
+## Lyrics licence
+
+**Do not display full lyrics without a signed licence agreement.**
+
+| Mode | What to display | Attribution required |
+|---|---|---|
+| Prototype (no licence) | Max 4 lines | `© Artist. Excerpt via Musixmatch.` |
+| Musixmatch licence | Full lyrics | Musixmatch badge |
+| LyricFind licence | Full lyrics | LyricFind attribution |
+
+Contact: licensing@musixmatch.com or sales@lyricfind.com
+
+---
+
+## Performance & scaling
+
+| Metric | Target |
+|---|---|
+| Search latency p50 | < 150 ms |
+| Search latency p99 | < 500 ms |
+| Corpus size | Up to 10 M segments |
+
+Key tuning variables in `.env`:
+```env
+SEARCH_CANDIDATE_LIMIT=200   # Pre-rerank pool size
+QDRANT_HNSW_EF=128           # Recall vs speed trade-off
+CACHE_TTL_SECONDS=300        # Redis hot-query cache
+INGEST_BATCH_SIZE=64         # Embedding batch size
+```
