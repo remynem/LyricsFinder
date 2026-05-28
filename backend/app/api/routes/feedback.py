@@ -18,8 +18,7 @@ class FeedbackRequest(BaseModel):
 
 @router.post("")
 async def post_feedback(req: FeedbackRequest, _: str = Depends(verify_api_key), db=Depends(get_db)):
-    record = Feedback(id=str(uuid.uuid4()), query_id=req.query_id, track_id=req.track_id,
-                      is_correct=req.is_correct, clicked_position=req.clicked_position)
-    db.add(record)
+    db.add(Feedback(id=str(uuid.uuid4()), query_id=req.query_id, track_id=req.track_id,
+                    is_correct=req.is_correct, clicked_position=req.clicked_position))
     await db.commit()
     return {"status": "ok"}

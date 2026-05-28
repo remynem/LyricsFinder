@@ -5,8 +5,6 @@ from app.db.models import Song, LyricSegment
 
 async def create_song(db: AsyncSession, song) -> None:
     external_ids = song.external_ids or {}
-    spotify_id = getattr(external_ids, "spotify_id", None)
-    musixmatch_id = getattr(external_ids, "musixmatch_id", None)
     record = Song(
         track_id=song.track_id,
         title=song.title,
@@ -15,8 +13,8 @@ async def create_song(db: AsyncSession, song) -> None:
         release_year=song.release_year,
         language=song.language,
         lyrics=song.lyrics,
-        spotify_id=spotify_id,
-        musixmatch_id=musixmatch_id,
+        spotify_id=getattr(external_ids, "spotify_id", None),
+        musixmatch_id=getattr(external_ids, "musixmatch_id", None),
     )
     await db.merge(record)
 

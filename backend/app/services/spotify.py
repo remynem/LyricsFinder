@@ -38,7 +38,8 @@ async def _get_token() -> str:
     import httpx
     if _token_cache.get("expires_at", 0) > time.time():
         return _token_cache["token"]
-    creds = base64.b64encode(f"{settings.SPOTIFY_CLIENT_ID}:{settings.SPOTIFY_CLIENT_SECRET}".encode()).decode()
+    creds = base64.b64encode(
+        f"{settings.SPOTIFY_CLIENT_ID}:{settings.SPOTIFY_CLIENT_SECRET}".encode()).decode()
     async with httpx.AsyncClient() as client:
         r = await client.post("https://accounts.spotify.com/api/token",
                               data={"grant_type": "client_credentials"},

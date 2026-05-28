@@ -18,7 +18,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - name: Install dependencies
+      - name: Install deps
         working-directory: backend
         run: pip install -r requirements.txt pytest pytest-asyncio pytest-cov httpx
 
@@ -34,8 +34,3 @@ jobs:
           API_KEY: test-key
           SECRET_KEY: test-secret
         run: pytest -v --cov=app --cov-report=xml
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          file: backend/coverage.xml

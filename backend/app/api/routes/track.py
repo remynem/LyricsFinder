@@ -33,22 +33,16 @@ async def get_track(track_id: str, _: str = Depends(verify_api_key), db=Depends(
     if not song:
         raise HTTPException(status_code=404, detail="Track not found")
 
-    lines = (song.lyrics or "").splitlines()
-    excerpt = "\n".join(lines[:4])  # Max 4 lines — licence compliance
+    excerpt = "\n".join((song.lyrics or "").splitlines()[:4])  # max 4 lines — licence compliance
 
     preview = None
     if song.spotify_id:
         preview = await get_spotify_preview(song.title, song.artist, song.spotify_id)
 
     return TrackResponse(
-        track_id=song.track_id,
-        title=song.title,
-        artist=song.artist,
-        album=song.album,
-        release_year=song.release_year,
-        language=song.language,
-        lyrics_excerpt=excerpt,
-        full_lyrics_available=False,
+        track_id=song.track_id, title=song.title, artist=song.artist,
+        album=song.album, release_year=song.release_year, language=song.language,
+        lyrics_excerpt=excerpt, full_lyrics_available=False,
         audio_preview=AudioPreview(**preview) if preview else None,
         external_links={"spotify": f"https://open.spotify.com/track/{song.spotify_id}" if song.spotify_id else None},
     )

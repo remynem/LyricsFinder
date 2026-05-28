@@ -28,28 +28,21 @@ class LexicalSearch:
         try:
             await self._ensure_index()
             from elasticsearch.helpers import async_bulk
-            actions = [{"_index": self._index, "_id": d["segment_id"], **d} for d in docs]
-            await async_bulk(self._es, actions)
+            await async_bulk(self._es, [{"_index": self._index, "_id": d["segment_id"], **d} for d in docs])
         except Exception:
             pass
 
     async def search(self, query: str, limit: int = 50, filter_language: Optional[str] = None) -> list[dict]:
         try:
             from app.services.text import sanitise_es_query
-            safe_query = sanitise_es_query(query)
-            must = [{"match": {"text": {"query": safe_query, "fuzziness": "AUTO"}}}]
+            must = [{"match": {"text": {"query": sanitise_es_query(query), "fuzziness": "AUTO"}}}]
             filter_ = [{"term": {"language": filter_language}}] if filter_language else []
             resp = await self._es.search(
                 index=self._index,
                 body={"query": {"bool": {"must": must, "filter": filter_}}, "size": limit},
             )
-            results = []
-            for hit in resp["hits"]["hits"]:
-                src = hit["_source"]
-                src["segment_id"] = hit["_id"]
-                src["score"] = hit["_score"]
-                results.append(src)
-            return results
+            return [{**hit["_source"], "segment_id": hit["_id"], "score": hit["_score"]}
+                    for hit in resp["hits"]["hits"]]
         except Exception:
             return []
 

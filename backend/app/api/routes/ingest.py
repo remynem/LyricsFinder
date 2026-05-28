@@ -1,12 +1,7 @@
-"""POST /ingest — normalise, segment, embed and index songs."""
-
-import asyncio
 import time
 from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-
 from app.core.auth import verify_api_key
 from app.core.config import settings
 from app.services.text import normalise_text, segment_lyrics, deduplicate_segments
@@ -22,7 +17,6 @@ router = APIRouter()
 class ExternalIds(BaseModel):
     spotify_id: Optional[str] = None
     musixmatch_id: Optional[str] = None
-    apple_music_id: Optional[str] = None
 
 
 class SongInput(BaseModel):
@@ -49,94 +43,51 @@ class IngestResponse(BaseModel):
 
 
 @router.post("", response_model=IngestResponse)
-async def ingest(
-    req: IngestRequest,
-    _: str = Depends(verify_api_key),
-    db=Depends(get_db),
-):
+async def ingest(req: IngestRequest, _: str = Depends(verify_api_key), db=Depends(get_db)):
     t0 = time.monotonic()
-    errors = []
-    total_segments = 0
-    songs_ok = 0
-
+    errors, total_segments, songs_ok = [], 0, 0
     embedder = get_embedder()
     vector_db = get_vector_db()
     lexical = get_lexical_search()
 
-    # Process in batches
-    batch_size = settings.INGEST_BATCH_SIZE
-
-    for i in range(0, len(req.songs), batch_size):
-        batch = req.songs[i : i + batch_size]
+    for i in range(0, len(req.songs), settings.INGEST_BATCH_SIZE):
+        batch = req.songs[i:i + settings.INGEST_BATCH_SIZE]
         try:
-            batch_segments, batch_songs_ok = await _process_batch(
-                batch, db, embedder, vector_db, lexical
-            )
-            total_segments += batch_segments
-            songs_ok += batch_songs_ok
+            all_segments = []
+            for song in batch:
+                segs = deduplicate_segments(segment_lyrics(normalise_text(song.lyrics), song.track_id))
+                for seg in segs:
+                    seg.update({
+                        "title": song.title, "artist": song.artist, "album": song.album or "",
+                        "language": song.language or "", "release_year": song.release_year,
+                        "spotify_id": (song.external_ids.spotify_id if song.external_ids else None) or "",
+                    })
+                all_segments.extend(segs)
+
+            if all_segments:
+                embeddings = await embedder.embed_batch([s["text"] for s in all_segments])
+                for seg, emb in zip(all_segments, embeddings):
+                    seg["embedding"] = emb
+                await vector_db.upsert(all_segments)
+                await lexical.bulk_index([
+                    {"segment_id": s["segment_id"], "track_id": s["track_id"], "text": s["text"],
+                     "title": s.get("title", ""), "artist": s.get("artist", ""),
+                     "language": s.get("language", ""), "release_year": s.get("release_year")}
+                    for s in all_segments
+                ])
+
+            for song in batch:
+                await create_song(db, song)
+                await create_segments(db, [s for s in all_segments if s["track_id"] == song.track_id])
+
+            await db.commit()
+            total_segments += len(all_segments)
+            songs_ok += len(batch)
         except Exception as exc:
-            errors.append(f"Batch {i//batch_size}: {str(exc)[:200]}")
+            errors.append(f"Batch {i // settings.INGEST_BATCH_SIZE}: {str(exc)[:200]}")
 
     return IngestResponse(
-        songs_ingested=songs_ok,
-        segments_created=total_segments,
+        songs_ingested=songs_ok, segments_created=total_segments,
         embeddings_generated=total_segments,
-        duration_seconds=round(time.monotonic() - t0, 2),
-        errors=errors,
+        duration_seconds=round(time.monotonic() - t0, 2), errors=errors,
     )
-
-
-async def _process_batch(batch, db, embedder, vector_db, lexical):
-    all_segments = []
-    song_records = []
-
-    for song in batch:
-        # Normalise text
-        normalised = normalise_text(song.lyrics)
-
-        # Segment into 1-3 line chunks
-        segments = segment_lyrics(normalised, song.track_id)
-
-        # Deduplicate repeated choruses (keep reference)
-        segments = deduplicate_segments(segments)
-
-        all_segments.extend(segments)
-        song_records.append(song)
-
-    if not all_segments:
-        return 0, 0
-
-    # Batch embed all segments
-    texts = [s["text"] for s in all_segments]
-    embeddings = await embedder.embed_batch(texts)
-
-    # Attach embeddings to segments
-    for seg, emb in zip(all_segments, embeddings):
-        seg["embedding"] = emb
-
-    # Upsert to PostgreSQL
-    for song in song_records:
-        song_segs = [s for s in all_segments if s["track_id"] == song.track_id]
-        await create_song(db, song)
-        await create_segments(db, song_segs)
-
-    # Upsert to vector DB
-    await vector_db.upsert(all_segments)
-
-    # Index in Elasticsearch (full text for BM25)
-    docs = [
-        {
-            "segment_id": s["segment_id"],
-            "track_id": s["track_id"],
-            "text": s["text"],
-            "title": s.get("title", ""),
-            "artist": s.get("artist", ""),
-            "language": s.get("language", ""),
-            "release_year": s.get("release_year"),
-        }
-        for s in all_segments
-    ]
-    await lexical.bulk_index(docs)
-
-    await db.commit()
-    return len(all_segments), len(song_records)
