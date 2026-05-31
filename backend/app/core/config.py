@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost:5432/lyricsfinder"
 
-    VECTOR_DB: Literal["qdrant", "pinecone"] = "qdrant"
+    VECTOR_DB: Literal["qdrant", "memory"] = "memory"  # default to memory for easy deploy
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_API_KEY: str = ""
     QDRANT_COLLECTION: str = "lyric_segments"
