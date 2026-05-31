@@ -7,15 +7,17 @@ pydantic-settings==2.2.1
 sqlalchemy[asyncio]==2.0.29
 asyncpg==0.29.0
 
-# Vector DB
-qdrant-client==1.9.1
+# Vector DB (optional — using in-memory mode)
+# qdrant-client==1.9.1
 
-# Search
+# Search (optional — graceful fallback if ES not available)
 elasticsearch[async]==8.13.0
 
-# Embeddings
-openai==1.26.0
+# Embeddings — lightweight multilingual model
 sentence-transformers==2.7.0
+# torch is a dependency of sentence-transformers but we use CPU-only
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu
 
 # NLP
 langdetect==1.0.9
